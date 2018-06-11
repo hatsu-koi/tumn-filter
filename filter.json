@@ -1,0 +1,34 @@
+[
+	{
+		"title": "Khinenw's NN FilterSet",
+		"id": "default",
+		"information": {
+			"author": "Tumn Developers",
+			"description": "A filter to blur inappropriate Korean texts.",
+			"source": {
+				"href": "https://github.com/hatsu-koi/tumn-filter",
+				"text": "https://github.com/hatsu-koi/tumn-filter"
+			}
+		},
+		"options": [
+			{
+				"name": "MatureContentNN",
+				"id": "default.maturecontent",
+				"description": "Filters Mature Content by neural network."
+			},
+			{
+				"name": "SwearwordsNN",
+				"id": "default.swearwords",
+				"description": "Filters Swearwords by neural network."
+			},
+			{
+				"name": "HateSpeechNN",
+				"id": "default.hatespeech",
+				"description": "Filters Hate Speeches by neural network."
+			}
+		],
+		"type": "filters",
+		"version": "1.0.0",
+		"entry": "main.py"
+	}
+]
