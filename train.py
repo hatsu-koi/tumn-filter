@@ -1,12 +1,13 @@
 from functools import reduce
 from gensim.models import Word2Vec
-from tf.keras.callbacks import TensorBoard
-from tf.keras.layers import Input, LSTM, Dense, Dropout
-from tf.keras.models import Model, Sequential
-from tf.keras.preprocessing.sequence import pad_sequences
+from keras.callbacks import ModelCheckpoint, TensorBoard
+from keras.layers import Bidirectional, LSTM
+from keras.models import Model, Sequential
+from keras.preprocessing.sequence import pad_sequences
 from logging import FileHandler, Formatter, StreamHandler
 from os import path
 
+import datetime
 import json
 import logging
 import numpy as np
@@ -16,22 +17,22 @@ import os
 def bind_word(sentence, w_model):
     for sentence_index in range(0, len(sentences)):
 
-        sentences[sentence_index] = list(filter(
-            lambda word: word in w_model.wv.vocab,
+        sentences[sentence_index] = list(map(
+            lambda word: w_model[word] if word in w_model.wv.vocab else w_model['.'],
             sentences[sentence_index]
         ))
-
-        for word_index in range(0, len(sentences[sentence_index])):
-            original_text = sentences[sentence_index][word_index]
-
-            sentences[sentence_index][word_index] = w_model[original_text]
 
     return sentences
 
 
-def chunkify(sentences, values, chunk_size, batch_size):
-    zipped = zip(sentences, values)
-    sentences_sorted = sorted(sentences, key=lambda x: len(x[0]))
+def split_train_set(train_set):
+    train_len = len(train_set)
+    test_amount = floor(train_len / 10)
+
+    return train_set[test_amount:], train_set[:test_amount]
+
+def chunkify(zipped, chunk_size, batch_size):
+    sentences_sorted = sorted(zipped, key=lambda x: len(x[0]))
     last_len = 0
     chunked = [
         {
@@ -67,17 +68,17 @@ def chunkify(sentences, values, chunk_size, batch_size):
     return chunked
 
 
-def process_data(args, logger, dataset_label):
+def process_data(args, logger, dataset_name, dataset_label):
     x_set = []
     y_set = []
 
     try:
-        with open('./fit/dataset/%s' % dataset_label, 'r') as f:
+        with open('./fit/dataset/%s/%s' % (dataset_name, dataset_label), 'r') as f:
             dataset = json.loads(f.read())
 
             for data in dataset:
-                x_set.append(bind_word(data[0]))
-                y_set.append(data[1])
+                x_set.append(data['content'])
+                y_set.append(data['filter'])
 
             f.close()
 
@@ -88,29 +89,30 @@ def process_data(args, logger, dataset_label):
 
 
 def run(args):
-    if path.exists("./fit/logs/deep-news.log"):
-        os.remove("./fit/logs/deep-news.log")
+    if path.exists("./fit/logs/tumn.log"):
+        os.remove("./fit/logs/tumn.log")
 
     file_formatter = Formatter('[%(levelname)s|%(filename)s:%(lineno)s] %(asctime)s > %(message)s')
-    file_handler = FileHandler('./fit/logs/deep-news.log')
+    file_handler = FileHandler('./fit/logs/tumn.log')
     file_handler.setFormatter(file_formatter)
 
     # stream_handler = ChalkHandler()
     stream_handler = StreamHandler()
 
-    logger = logging.getLogger("DeepNews")
+    logger = logging.getLogger("Tumn")
     logger.setLevel(logging.DEBUG)
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
 
-    epoch = args.epoch
-    seq_chunk = args.seq_chunk
-    batch_size = args.batch_size
-    word2vec_size = args.word2vec_size
-    verbosity = args.verbosity
-    tensorboard = args.tensorboard
+    dataset_name = args['dataset_name']
+    epoch = args['epoch']
+    seq_chunk = args['seq_chunk']
+    batch_size = args['batch_size']
+    word2vec_size = args['word2vec_size']
+    verbosity = args['verbosity']
+    tensorboard = args['tensorboard']
 
-    # Creating news model
+    # Creating tumn model
     logger.info("[Fit] Generating model...")
 
     model = Sequential([
@@ -128,36 +130,56 @@ def run(args):
 
     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
 
-    # Reading parsed news
-
+    # Reading parsed comments
     logger.info("[Fit] Reading parsed dataset...")
 
-    [x_train, y_train] = process_data(args, logger, "train")
-    [x_test, y_test] = process_data(args, logger, "test")
-    logger.info("[Fit] Done reading %d train set & %d test sets!" % (len(x_train), len(x_test)))
+    train_set = process_data(args, logger, dataset_name, "train")
+    train_zipped = []
+    test_set = []
+    test_zipped = []
+    test_from_train = True
+
+    if path.exists("./fit/dataset/%s/%s" % (dataset_name, 'test')):
+        test_set = process_data(args, logger, dataset_name, "test")
+        test_zipped = zip(*test_set)
+        test_from_train = False
+
+    logger.info("[Fit] Done reading %d train set & %d test sets!" % (len(train_set), len(test_set)))
 
     # Creating Word embedding model
     if not path.exists("./fit/models/word2vec.txt"):
         logger.info("[Fit] Creating word2vec model...")
 
-        w_model = Word2Vec(x_train, min_count=1, size=word2vec_size, iter=10, sg=0)
+        w_model = Word2Vec(train_set[0], min_count=1, size=word2vec_size, iter=10, sg=0)
         w_model.save("./fit/models/word2vec.txt")
 
     else:
         logger.info("[Fit] Reading from saved word2vec model...")
         w_model = Word2Vec.load("./fit/models/word2vec.txt")
 
+    # Zipping Models
+    train_zipped = zip(*train_set)
+
+    if test_from_train:
+        train_zipped, test_zipped = split_train_set(train_set)
+
     # Preprocess input, outputs
     logger.info("[Fit] Preprocessing train dataset...")
-    train_chunks = chunkify(bind_word(x_train, w_model), y_train, seq_chunk, batch_size)
+    train_chunks = chunkify(train_zipped, seq_chunk, batch_size)
 
     logger.info("[Fit] Preprocessing test dataset...")
-    test_chunks = chunkify(bind_word(x_test, w_model), y_test, seq_chunk, batch_size)
+    test_chunks = chunkify(test_zipped, seq_chunk, batch_size)
 
     # Fit the model
     logger.info("[Fit] Fitting the model...")
 
-    callbacks = []
+    model_path = \
+        "./fit/models/%s (date%s" % (dataset_name, dt.strftime("%Y%m%d")) + \
+        ", epoch {epoch:02d}, loss ${val_loss:.2f}).hdf5"
+
+    callbacks = [
+        ModelCheckpoint(save_best_only=True, filepath=model_path)
+    ]
 
     if tensorboard:
         callbacks.append(TensorBoard(log_dir=tensorboard))
@@ -168,8 +190,6 @@ def run(args):
         epochs=epoch, verbose=verbosity, callbacks=callbacks
     )
 
-    model.save("./fit/models/filter.h5")
-
 
 def check_and_create_dir(dir_name):
     if not path.isdir(dir_name):
@@ -179,8 +199,6 @@ def check_and_create_dir(dir_name):
 if __name__ == "__main__":
     check_and_create_dir("./fit/")
     check_and_create_dir("./fit/dataset/")
-    check_and_create_dir("./fit/dataset/test/")
-    check_and_create_dir("./fit/dataset/train/")
     check_and_create_dir("./fit/models/")
     check_and_create_dir("./fit/logs/")
     check_and_create_dir("./fit/logs/model/")
@@ -191,7 +209,8 @@ if __name__ == "__main__":
         'batch_size': 128,
         'word2vec_size': 50,
         'verbosity': 1,
-        'tensorboard': './fit/logs/model/'
+        'tensorboard': './fit/logs/model/',
+        'dataset_name': 'swearwords'
     }
 
     if not path.exists("./fit/config.json"):
@@ -202,4 +221,12 @@ if __name__ == "__main__":
         configuration = json.load(f)
 
     configuration.update(default_configuration)
+
+    dataset_basepath = "./fit/dataset/%s/" % configuration['dataset_name']
+    check_and_create_dir(dataset_basepath)
+
+    if not path.exists(dataset_basepath + "train"):
+        print("Dataset not given!")
+        exit()
+
     run(configuration)
