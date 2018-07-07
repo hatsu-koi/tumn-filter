@@ -27,45 +27,49 @@ def bind_word(sentence, w_model):
 
 def split_train_set(train_set):
     train_len = len(train_set)
-    test_amount = floor(train_len / 10)
+    test_amount = int(train_len / 10)
 
     return train_set[test_amount:], train_set[:test_amount]
 
-def chunkify(zipped, chunk_size, batch_size):
-    sentences_sorted = sorted(zipped, key=lambda x: len(x[0]))
-    last_len = 0
-    chunked = [
-        {
-            'x_list': [],
-            'y_list': [],
-            'max_size': 0
-        }
-    ]
 
-    def process_last_chunk():
+def len_chunk(sentences_sorted, chunk_size, batch_size):
+    last_len = len(sentences_sorted[0][0])
+    chunk = 0
+    yield_amount = 1
+
+    for (sentence, value) in sentences_sorted:
+        if (last_len + chunk_size < len(sentence)) or (chunk > batch_size):
+            yield_amount += 1
+            chunk = 0
+
+        chunk += 1
+
+    return yield_amount
+
+
+def chunkify(sentences_sorted, chunk_size, batch_size):
+    last_len = len(sentences_sorted[0][0])
+    chunked = [[], []]
+
+    def process_last_chunk(sentence):
         last_len = len(sentence)
-        max_size = len(chunked[-1]['x_list'][-1])
+        max_size = len(chunked[0][-1])
 
-        chunked[-1]['x_list'] = np.array(pad_sequence(chunked[-1]['x_list'], maxlen=max_size))
-        chunked[-1]['y_list'] = np.array(pad_sequence(chunked[-1]['y_list'], maxlen=max_size))
-        chunked[-1]['max_size'] = max_size
+        chunked[0] = np.array(pad_sequence(chunked[0], maxlen=max_size))
+        chunked[1] = np.array(pad_sequence(chunked[1], maxlen=max_size))
 
     for (sentence, value) in sentences_sorted:
         if (last_len + chunk_size < len(sentence)) or (len(chunked[-1]) > batch_size):
-            process_last_chunk()
+            process_last_chunk(sentence)
+            yield chunked
 
-            chunked.append({
-                'x_list': [],
-                'y_list': [],
-                'max_size': 0
-            })
+            chunked = [[], []]
 
-        chunked[-1]['x_list'].append(sentence)
-        chunked[-1]['y_list'].append(value)
+        chunked[0].append(sentence)
+        chunked[1].append(value)
 
     process_last_chunk()
-
-    return chunked
+    yield chunked
 
 
 def process_data(args, logger, dataset_name, dataset_label):
@@ -73,7 +77,7 @@ def process_data(args, logger, dataset_name, dataset_label):
     y_set = []
 
     try:
-        with open('./fit/dataset/%s/%s' % (dataset_name, dataset_label), 'r') as f:
+        with open('./fit/dataset/%s/%s' % (dataset_name, dataset_label), 'r', encoding='utf-8') as f:
             dataset = json.loads(f.read())
 
             for data in dataset:
@@ -117,15 +121,13 @@ def run(args):
 
     model = Sequential([
         Bidirectional(
-            LSTM(
-                10, activation='relu', name='lstm1',
-                dropout=0.2, return_sequences=True,
-                input_shape=(None, word2vec_size)
-            )
+            LSTM(10, activation='relu', dropout=0.1, return_sequences=True),
+
+            input_shape=(None, word2vec_size)
         ),
 
-        LSTM(20, activation='relu', name='lstm2', dropout=0.2, return_sequences=True),
-        LSTM(1, activation='relu', name='lstm2', dropout=0.2, return_sequences=True)
+        LSTM(20, activation='relu', dropout=0.15, return_sequences=True),
+        LSTM(1, activation='relu', dropout=0.1, return_sequences=True)
     ])
 
     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
@@ -134,15 +136,18 @@ def run(args):
     logger.info("[Fit] Reading parsed dataset...")
 
     train_set = process_data(args, logger, dataset_name, "train")
-    train_zipped = []
+    train_zipped = list(zip(*train_set))
     test_set = []
     test_zipped = []
     test_from_train = True
 
     if path.exists("./fit/dataset/%s/%s" % (dataset_name, 'test')):
         test_set = process_data(args, logger, dataset_name, "test")
-        test_zipped = zip(*test_set)
+        test_zipped = list(zip(*test_set))
         test_from_train = False
+
+    else:
+        logger.info("[Fit] No validation set found. It will split train set into train set and validation set.")
 
     logger.info("[Fit] Done reading %d train set & %d test sets!" % (len(train_set), len(test_set)))
 
@@ -158,23 +163,26 @@ def run(args):
         w_model = Word2Vec.load("./fit/models/word2vec.txt")
 
     # Zipping Models
-    train_zipped = zip(*train_set)
-
     if test_from_train:
-        train_zipped, test_zipped = split_train_set(train_set)
+        train_zipped, test_zipped = split_train_set(train_zipped)
+
+    train_zipped = sorted(train_zipped, key=lambda x: len(x[0]))
+    test_zipped = sorted(test_zipped, key=lambda x: len(x[0]))
 
     # Preprocess input, outputs
     logger.info("[Fit] Preprocessing train dataset...")
-    train_chunks = chunkify(train_zipped, seq_chunk, batch_size)
+    train_len = len_chunk(train_zipped, seq_chunk, batch_size)
+    train_generator = chunkify(train_zipped, seq_chunk, batch_size)
 
     logger.info("[Fit] Preprocessing test dataset...")
-    test_chunks = chunkify(test_zipped, seq_chunk, batch_size)
+    test_len = len_chunk(test_zipped, seq_chunk, batch_size)
+    test_generator = chunkify(test_zipped, seq_chunk, batch_size)
 
     # Fit the model
     logger.info("[Fit] Fitting the model...")
 
     model_path = \
-        "./fit/models/%s (date%s" % (dataset_name, dt.strftime("%Y%m%d")) + \
+        "./fit/models/%s (date%s" % (dataset_name, datetime.datetime.now().strftime("%Y%m%d")) + \
         ", epoch {epoch:02d}, loss ${val_loss:.2f}).hdf5"
 
     callbacks = [
@@ -185,8 +193,8 @@ def run(args):
         callbacks.append(TensorBoard(log_dir=tensorboard))
 
     model.fit_generator(
-        generator=[(chunk['x_list'], chunk['y_list']) for chunk in train_chunks],
-        validation_data=[(chunk['x_list'], chunk['y_list']) for chunk in test_chunks],
+        generator=train_generator, validation_data=test_generator,
+        steps_per_epoch=train_len, validation_steps=test_len,
         epochs=epoch, verbose=verbosity, callbacks=callbacks
     )
 
@@ -214,10 +222,10 @@ if __name__ == "__main__":
     }
 
     if not path.exists("./fit/config.json"):
-        with open('./fit/config.json', 'w') as f:
+        with open('./fit/config.json', 'w', encoding='utf-8') as f:
             json.dump(default_configuration, f, indent=4)
 
-    with open('./fit/config.json', 'r') as f:
+    with open('./fit/config.json', 'r', encoding='utf-8') as f:
         configuration = json.load(f)
 
     configuration.update(default_configuration)
