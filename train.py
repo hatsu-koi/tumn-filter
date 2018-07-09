@@ -1,7 +1,7 @@
 from functools import reduce
 from gensim.models import Word2Vec
 from keras.callbacks import ModelCheckpoint, TensorBoard
-from keras.layers import Bidirectional, LSTM
+from keras.layers import Bidirectional, LSTM, Reshape
 from keras.models import Model, Sequential
 from keras.preprocessing.sequence import pad_sequences
 from logging import FileHandler, Formatter, StreamHandler
@@ -14,11 +14,11 @@ import numpy as np
 import os
 
 
-def bind_word(sentence, w_model):
+def bind_word(sentences, w_model):
     for sentence_index in range(0, len(sentences)):
 
         sentences[sentence_index] = list(map(
-            lambda word: w_model[word] if word in w_model.wv.vocab else w_model['.'],
+            lambda word: w_model[word] if word in w_model.wv.vocab else np.zeros(50),
             sentences[sentence_index]
         ))
 
@@ -41,6 +41,7 @@ def len_chunk(sentences_sorted, chunk_size, batch_size):
         if (last_len + chunk_size < len(sentence)) or (chunk > batch_size):
             yield_amount += 1
             chunk = 0
+            last_len = len(sentence)
 
         chunk += 1
 
@@ -52,14 +53,16 @@ def chunkify(sentences_sorted, chunk_size, batch_size):
     chunked = [[], []]
 
     def process_last_chunk(sentence):
+        nonlocal last_len, chunked
+
         last_len = len(sentence)
         max_size = len(chunked[0][-1])
 
-        chunked[0] = np.array(pad_sequence(chunked[0], maxlen=max_size))
-        chunked[1] = np.array(pad_sequence(chunked[1], maxlen=max_size))
+        chunked[0] = np.array(pad_sequences(chunked[0], maxlen=max_size))
+        chunked[1] = np.array(pad_sequences(chunked[1], maxlen=max_size))
 
     for (sentence, value) in sentences_sorted:
-        if (last_len + chunk_size < len(sentence)) or (len(chunked[-1]) > batch_size):
+        if (last_len + chunk_size < len(sentence)) or (len(chunked[0]) > batch_size):
             process_last_chunk(sentence)
             yield chunked
 
@@ -68,7 +71,7 @@ def chunkify(sentences_sorted, chunk_size, batch_size):
         chunked[0].append(sentence)
         chunked[1].append(value)
 
-    process_last_chunk()
+    process_last_chunk([])
     yield chunked
 
 
@@ -89,7 +92,7 @@ def process_data(args, logger, dataset_name, dataset_label):
     except IOError:
         logger.error("[Fit] Error while reading dataset %s!" % dataset_label)
 
-    return x_set, y_set
+    return [x_set, y_set]
 
 
 def run(args):
@@ -125,9 +128,9 @@ def run(args):
 
             input_shape=(None, word2vec_size)
         ),
-
         LSTM(20, activation='relu', dropout=0.15, return_sequences=True),
-        LSTM(1, activation='relu', dropout=0.1, return_sequences=True)
+        LSTM(1, activation='relu', dropout=0.1, return_sequences=True),
+        Reshape((-1, ))
     ])
 
     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
@@ -136,20 +139,20 @@ def run(args):
     logger.info("[Fit] Reading parsed dataset...")
 
     train_set = process_data(args, logger, dataset_name, "train")
-    train_zipped = list(zip(*train_set))
-    test_set = []
+    train_zipped = []
+    test_set = [[], []]
     test_zipped = []
     test_from_train = True
 
     if path.exists("./fit/dataset/%s/%s" % (dataset_name, 'test')):
         test_set = process_data(args, logger, dataset_name, "test")
-        test_zipped = list(zip(*test_set))
+        test_zipped = []
         test_from_train = False
 
     else:
         logger.info("[Fit] No validation set found. It will split train set into train set and validation set.")
 
-    logger.info("[Fit] Done reading %d train set & %d test sets!" % (len(train_set), len(test_set)))
+    logger.info("[Fit] Done reading %d train set & %d test sets!" % (len(train_set[0]), len(test_set[0])))
 
     # Creating Word embedding model
     if not path.exists("./fit/models/word2vec.txt"):
@@ -162,12 +165,19 @@ def run(args):
         logger.info("[Fit] Reading from saved word2vec model...")
         w_model = Word2Vec.load("./fit/models/word2vec.txt")
 
+    train_set[0] = bind_word(train_set[0], w_model)
+    train_zipped = list(zip(*train_set))
+
     # Zipping Models
     if test_from_train:
         train_zipped, test_zipped = split_train_set(train_zipped)
 
-    train_zipped = sorted(train_zipped, key=lambda x: len(x[0]))
-    test_zipped = sorted(test_zipped, key=lambda x: len(x[0]))
+    else:
+        test_set[0] = bind_word(test_set[0], w_model)
+        test_zipped = list(zip(*test_set))
+
+    train_zipped = sorted(train_zipped, key=lambda zip: len(zip[0]))
+    test_zipped = sorted(test_zipped, key=lambda zip: len(zip[0]))
 
     # Preprocess input, outputs
     logger.info("[Fit] Preprocessing train dataset...")
