@@ -6,23 +6,13 @@ from keras.models import Model, Sequential
 from keras.preprocessing.sequence import pad_sequences
 from logging import FileHandler, Formatter, StreamHandler
 from os import path
+from main import bind_word, chunkify
 
 import datetime
 import json
 import logging
 import numpy as np
 import os
-
-
-def bind_word(sentences, w_model):
-    for sentence_index in range(0, len(sentences)):
-
-        sentences[sentence_index] = list(map(
-            lambda word: w_model[word] if word in w_model.wv.vocab else np.zeros(50),
-            sentences[sentence_index]
-        ))
-
-    return sentences
 
 
 def split_train_set(train_set):
@@ -46,33 +36,6 @@ def len_chunk(sentences_sorted, chunk_size, batch_size):
         chunk += 1
 
     return yield_amount
-
-
-def chunkify(sentences_sorted, chunk_size, batch_size):
-    last_len = len(sentences_sorted[0][0])
-    chunked = [[], []]
-
-    def process_last_chunk(sentence):
-        nonlocal last_len, chunked
-
-        last_len = len(sentence)
-        max_size = len(chunked[0][-1])
-
-        chunked[0] = np.array(pad_sequences(chunked[0], maxlen=max_size))
-        chunked[1] = np.array(pad_sequences(chunked[1], maxlen=max_size))
-
-    for (sentence, value) in sentences_sorted:
-        if (last_len + chunk_size < len(sentence)) or (len(chunked[0]) > batch_size):
-            process_last_chunk(sentence)
-            yield chunked
-
-            chunked = [[], []]
-
-        chunked[0].append(sentence)
-        chunked[1].append(value)
-
-    process_last_chunk([])
-    yield chunked
 
 
 def process_data(args, logger, dataset_name, dataset_label):
