@@ -1,5 +1,6 @@
 from gensim.models import Word2Vec
 from keras.models import load_model
+from konlpy.tag import Twitter
 import re
 
 model_prefix = 'default'
@@ -8,7 +9,7 @@ threshold = 0.8
 
 models = {}
 filters = {}
-regex = re.compile('[^ㄱ-ㅎㅏ-ㅣ가-힣A-Za-z0-9-_]+')
+twitter = Twitter()
 
 
 def bind_word(sentences, w_model):
@@ -99,7 +100,7 @@ def split_sentences(zipped_sentences):
 
 
 def split_and_get_position(sentence):
-    results = regex.finditer(sentence)
+    results = twitter.pos(sentences[sentence_index])
     words = []
     positions = []
     start = 0
@@ -107,15 +108,10 @@ def split_and_get_position(sentence):
         if result.start() == 0:
             continue
 
-        positions.append([start, result.start() - 1])
-        words.append(sentence[start:result.start() - 1])
+        positions.append([start, start + len(result[0]) - 1])
+        words.append("%s/%s" % result);
 
-        start = results.end()
-
-    last_section = sentence[start:]
-    if len(last_section) > 0:
-        positions.append([start, len(sentence) - 1])
-        words.append(last_section)
+        start += len(result[0])
 
     return words, positions
 
