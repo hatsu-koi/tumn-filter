@@ -13,9 +13,11 @@ import json
 import logging
 import numpy as np
 import os
+import random
 
 
 def split_train_set(train_set):
+    random.shuffle(train_set)
     train_len = len(train_set)
     test_amount = int(train_len / 10)
 
@@ -150,6 +152,8 @@ def run(args):
     logger.info("[Fit] Preprocessing test dataset...")
     test_len = len_chunk(test_zipped, seq_chunk, batch_size)
     test_generator = chunkify(test_zipped, seq_chunk, batch_size)
+	
+    logger.info("[Fit] Done generating %d train set & %d test sets!" % (len(train_zipped), len(test_zipped)))
 
     # Fit the model
     logger.info("[Fit] Fitting the model...")
@@ -164,7 +168,7 @@ def run(args):
 
     if tensorboard:
         callbacks.append(TensorBoard(log_dir=tensorboard))
-
+		
     model.fit_generator(
         generator=train_generator, validation_data=test_generator,
         steps_per_epoch=train_len, validation_steps=test_len,

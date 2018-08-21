@@ -1,6 +1,8 @@
 from gensim.models import Word2Vec
 from keras.models import load_model
+from keras.preprocessing.sequence import pad_sequences
 from konlpy.tag import Twitter
+import numpy as np
 import re
 
 model_prefix = 'default'
