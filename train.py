@@ -50,7 +50,7 @@ def process_data(args, logger, dataset_name, dataset_label):
 
             for data in dataset:
                 x_set.append(data['content'])
-                y_set.append(data['filter'])
+                y_set.append([1 if filter else 0 for filter in data['filter']])
 
             f.close()
 
@@ -152,7 +152,7 @@ def run(args):
     logger.info("[Fit] Preprocessing test dataset...")
     test_len = len_chunk(test_zipped, seq_chunk, batch_size)
     test_generator = chunkify(test_zipped, seq_chunk, batch_size)
-	
+
     logger.info("[Fit] Done generating %d train set & %d test sets!" % (len(train_zipped), len(test_zipped)))
 
     # Fit the model
@@ -168,10 +168,10 @@ def run(args):
 
     if tensorboard:
         callbacks.append(TensorBoard(log_dir=tensorboard))
-		
+
     model.fit_generator(
         generator=train_generator, validation_data=test_generator,
-        steps_per_epoch=train_len, validation_steps=test_len,
+        steps_per_epoch=20, validation_steps=test_len,
         epochs=epoch, verbose=verbosity, callbacks=callbacks
     )
 

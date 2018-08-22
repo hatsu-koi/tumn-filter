@@ -8,6 +8,7 @@ import re
 model_prefix = 'default'
 wv_model = None
 threshold = 0.8
+configuration = {}
 
 models = {}
 filters = {}
@@ -25,34 +26,41 @@ def bind_word(sentences, w_model):
     return sentences
 
 
-def chunkify(sentences_sorted, chunk_size, batch_size):
-    last_len = len(sentences_sorted[0][0])
-    chunked = [[], []]
+def chunkify(sentences_sorted, chunk_size, batch_size, circulate=True):
+    while True:
+        last_len = len(sentences_sorted[0][0])
+        chunked = [[], []]
 
-    def process_last_chunk(sentence):
-        nonlocal last_len, chunked
+        def process_last_chunk(sentence):
+            nonlocal last_len, chunked
 
-        last_len = len(sentence)
-        max_size = len(chunked[0][-1])
+            last_len = len(sentence)
+            max_size = len(chunked[0][-1])
 
-        chunked[0] = np.array(pad_sequences(chunked[0], maxlen=max_size))
-        chunked[1] = np.array(pad_sequences(chunked[1], maxlen=max_size))
+            chunked[0] = np.array(pad_sequences(chunked[0], maxlen=max_size))
+            chunked[1] = np.array(pad_sequences(chunked[1], maxlen=max_size))
 
-    for (sentence, value) in sentences_sorted:
-        if (last_len + chunk_size < len(sentence)) or (len(chunked[0]) > batch_size):
-            process_last_chunk(sentence)
-            yield chunked
+        for (sentence, value) in sentences_sorted:
+            if (last_len + chunk_size < len(sentence)) or (len(chunked[0]) > batch_size):
+                process_last_chunk(sentence)
+                yield chunked
 
-            chunked = [[], []]
+                chunked = [[], []]
 
-        chunked[0].append(sentence)
-        chunked[1].append(value)
+            chunked[0].append(sentence)
+            chunked[1].append(value)
 
-    process_last_chunk([])
-    yield chunked
+        process_last_chunk([])
+        yield chunked
+
+        if not circulate:
+            break
 
 
 def load():
+    with open('./fit/config.json', 'r', encoding='utf-8') as f:
+        configuration = json.load(f)
+
     wv_model = Word2Vec.load("./fit/models/word2vec.txt")
 
     for model_name in ['swearwords', 'hatespeech', 'mature']:
@@ -65,8 +73,8 @@ def load():
             zipped = sorted(zipped, key=lambda x: len(x[1]))
             id_maps, sentences, positions = zip(*zipped) # Unzipping
 
-            sentences = bind_word(sentences)
-            sentences_generator = chunkify(sentences)
+            sentences = bind_word(sentences, wv_model)
+            sentences_generator = chunkify(sentences, configuration['seq_chunk'], configuration['batch_size'], False)
 
             return_output = []
 
