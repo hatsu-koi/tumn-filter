@@ -1,6 +1,7 @@
 from gensim.models import Word2Vec
 from keras.models import load_model
 from keras.preprocessing.sequence import pad_sequences
+from keras.utils import Sequence
 from konlpy.tag import Twitter
 import numpy as np
 import re
@@ -15,19 +16,10 @@ filters = {}
 twitter = Twitter()
 
 
-def bind_word(sentences, w_model):
-    for sentence_index in range(0, len(sentences)):
+class TumnSequence(Sequence):
+    def __init__(self, sentences_sorted, chunk_size, batch_size):
+        self.dataset = []
 
-        sentences[sentence_index] = list(map(
-            lambda word: w_model[word] if word in w_model.wv.vocab else np.zeros(50),
-            sentences[sentence_index]
-        ))
-
-    return sentences
-
-
-def chunkify(sentences_sorted, chunk_size, batch_size, circulate=True):
-    while True:
         last_len = len(sentences_sorted[0][0])
         chunked = [[], []]
 
@@ -41,9 +33,9 @@ def chunkify(sentences_sorted, chunk_size, batch_size, circulate=True):
             chunked[1] = np.array(pad_sequences(chunked[1], maxlen=max_size))
 
         for (sentence, value) in sentences_sorted:
-            if (last_len + chunk_size < len(sentence)) or (len(chunked[0]) > batch_size):
+            if (last_len + chunk_size < len(sentence)) or (len(chunked[0]) >= batch_size):
                 process_last_chunk(sentence)
-                yield chunked
+                self.dataset.append(chunked)
 
                 chunked = [[], []]
 
@@ -51,10 +43,24 @@ def chunkify(sentences_sorted, chunk_size, batch_size, circulate=True):
             chunked[1].append(value)
 
         process_last_chunk([])
-        yield chunked
+        self.dataset.append(chunked)
 
-        if not circulate:
-            break
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        return self.dataset[idx]
+
+
+def bind_word(sentences, w_model):
+    for sentence_index in range(0, len(sentences)):
+
+        sentences[sentence_index] = list(map(
+            lambda word: w_model[word] if word in w_model.wv.vocab else np.zeros(50),
+            sentences[sentence_index]
+        ))
+
+    return sentences
 
 
 def load():
@@ -74,7 +80,7 @@ def load():
             id_maps, sentences, positions = zip(*zipped) # Unzipping
 
             sentences = bind_word(sentences, wv_model)
-            sentences_generator = chunkify(sentences, configuration['seq_chunk'], configuration['batch_size'], False)
+            sentences_generator = TumnSequence(sentences, configuration['seq_chunk'], configuration['batch_size'])
 
             return_output = []
 

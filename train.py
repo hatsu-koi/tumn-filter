@@ -6,7 +6,7 @@ from keras.models import Model, Sequential
 from keras.preprocessing.sequence import pad_sequences
 from logging import FileHandler, Formatter, StreamHandler
 from os import path
-from main import bind_word, chunkify
+from main import bind_word, TumnSequence
 
 import datetime
 import json
@@ -24,22 +24,6 @@ def split_train_set(train_set):
     return train_set[test_amount:], train_set[:test_amount]
 
 
-def len_chunk(sentences_sorted, chunk_size, batch_size):
-    last_len = len(sentences_sorted[0][0])
-    chunk = 0
-    yield_amount = 1
-
-    for (sentence, value) in sentences_sorted:
-        if (last_len + chunk_size < len(sentence)) or (chunk > batch_size):
-            yield_amount += 1
-            chunk = 0
-            last_len = len(sentence)
-
-        chunk += 1
-
-    return yield_amount
-
-
 def process_data(args, logger, dataset_name, dataset_label):
     x_set = []
     y_set = []
@@ -50,7 +34,7 @@ def process_data(args, logger, dataset_name, dataset_label):
 
             for data in dataset:
                 x_set.append(data['content'])
-                y_set.append([1 if filter else 0 for filter in data['filter']])
+                y_set.append([1.0 if filter else 0.0 for filter in data['filter']])
 
             f.close()
 
@@ -89,16 +73,16 @@ def run(args):
 
     model = Sequential([
         Bidirectional(
-            LSTM(10, activation='relu', dropout=0.1, return_sequences=True),
+            LSTM(10, activation='relu', dropout=0.05, return_sequences=True),
 
             input_shape=(None, word2vec_size)
         ),
-        LSTM(20, activation='relu', dropout=0.15, return_sequences=True),
-        LSTM(1, activation='relu', dropout=0.1, return_sequences=True),
+        # LSTM(20, activation='relu', dropout=0.1, return_sequences=True),
+        LSTM(1, activation='sigmoid', dropout=0.05, return_sequences=True),
         Reshape((-1, ))
     ])
 
-    model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
 
     # Reading parsed comments
     logger.info("[Fit] Reading parsed dataset...")
@@ -146,12 +130,10 @@ def run(args):
 
     # Preprocess input, outputs
     logger.info("[Fit] Preprocessing train dataset...")
-    train_len = len_chunk(train_zipped, seq_chunk, batch_size)
-    train_generator = chunkify(train_zipped, seq_chunk, batch_size)
+    train_generator = TumnSequence(train_zipped, seq_chunk, batch_size)
 
     logger.info("[Fit] Preprocessing test dataset...")
-    test_len = len_chunk(test_zipped, seq_chunk, batch_size)
-    test_generator = chunkify(test_zipped, seq_chunk, batch_size)
+    test_generator = TumnSequence(test_zipped, seq_chunk, batch_size)
 
     logger.info("[Fit] Done generating %d train set & %d test sets!" % (len(train_zipped), len(test_zipped)))
 
@@ -163,7 +145,7 @@ def run(args):
         ", epoch {epoch:02d}, loss ${val_loss:.2f}).hdf5"
 
     callbacks = [
-        ModelCheckpoint(save_best_only=True, filepath=model_path)
+        #ModelCheckpoint(save_best_only=True, filepath=model_path)
     ]
 
     if tensorboard:
@@ -171,8 +153,8 @@ def run(args):
 
     model.fit_generator(
         generator=train_generator, validation_data=test_generator,
-        steps_per_epoch=20, validation_steps=test_len,
-        epochs=epoch, verbose=verbosity, callbacks=callbacks
+        epochs=epoch, verbose=verbosity, callbacks=callbacks,
+        shuffle=True
     )
 
 
@@ -204,8 +186,9 @@ if __name__ == "__main__":
 
     with open('./fit/config.json', 'r', encoding='utf-8') as f:
         configuration = json.load(f)
+        default_configuration.update(configuration)
 
-    configuration.update(default_configuration)
+        configuration = default_configuration
 
     dataset_basepath = "./fit/dataset/%s/" % configuration['dataset_name']
     check_and_create_dir(dataset_basepath)
