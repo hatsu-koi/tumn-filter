@@ -2,12 +2,13 @@ from functools import reduce
 from gensim.models import Word2Vec
 from keras.callbacks import ModelCheckpoint, TensorBoard
 from keras.layers import Bidirectional, LSTM, Reshape
-from keras.models import Model, Sequential
+from keras.models import Sequential, load_model
 from keras.preprocessing.sequence import pad_sequences
 from logging import FileHandler, Formatter, StreamHandler
 from os import path
 from main import bind_word, TumnSequence
 
+import argparse
 import datetime
 import json
 import logging
@@ -70,19 +71,25 @@ def run(args):
 
     # Creating tumn model
     logger.info("[Fit] Generating model...")
+    model = None
 
-    model = Sequential([
-        Bidirectional(
-            LSTM(10, activation='relu', dropout=0.05, return_sequences=True),
+    if args['load']:
+        model = load_model(args['load'])
+        logger.info("[Fit] Loaded model from %s." % args['load'])
 
-            input_shape=(None, word2vec_size)
-        ),
-        # LSTM(20, activation='relu', dropout=0.1, return_sequences=True),
-        LSTM(1, activation='sigmoid', dropout=0.05, return_sequences=True),
-        Reshape((-1, ))
-    ])
+    else:
+        model = Sequential([
+            Bidirectional(
+                LSTM(5, activation='relu', dropout=0.05, return_sequences=True),
 
-    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
+                input_shape=(None, word2vec_size)
+            ),
+            LSTM(10, activation='relu', dropout=0.1, return_sequences=True),
+            LSTM(1, activation='sigmoid', dropout=0.05, return_sequences=True),
+            Reshape((-1, ))
+        ])
+
+        model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
 
     # Reading parsed comments
     logger.info("[Fit] Reading parsed dataset...")
@@ -141,11 +148,11 @@ def run(args):
     logger.info("[Fit] Fitting the model...")
 
     model_path = \
-        "./fit/models/%s (date%s" % (dataset_name, datetime.datetime.now().strftime("%Y%m%d")) + \
-        ", epoch {epoch:02d}, loss ${val_loss:.2f}).hdf5"
+        "./fit/models/%s (Date %s" % (dataset_name, datetime.datetime.now().strftime("%m-%d %Hh %Mm ")) + \
+        ", Epoch {epoch:02d}, Acc {val_categorical_accuracy:.3f}, Loss {val_loss:.3f}).hdf5"
 
     callbacks = [
-        #ModelCheckpoint(save_best_only=True, filepath=model_path)
+        ModelCheckpoint(filepath=model_path)
     ]
 
     if tensorboard:
@@ -164,6 +171,12 @@ def check_and_create_dir(dir_name):
 
 
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description='Train models')
+    parser.add_argument('--load', dest='load', metavar='[hd5]', help='Resume from hd5 file.')
+
+    args = parser.parse_args()
+
     check_and_create_dir("./fit/")
     check_and_create_dir("./fit/dataset/")
     check_and_create_dir("./fit/models/")
@@ -196,5 +209,11 @@ if __name__ == "__main__":
     if not path.exists(dataset_basepath + "train"):
         print("Dataset not given!")
         exit()
+
+    if args.load:
+        configuration['load'] = args.load
+
+    else:
+        configuration['load'] = None
 
     run(configuration)
