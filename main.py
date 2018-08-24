@@ -4,6 +4,7 @@ from keras.preprocessing.sequence import pad_sequences
 from keras.utils import Sequence
 from konlpy.tag import Twitter
 import numpy as np
+import json
 import re
 
 model_prefix = 'default'
@@ -87,7 +88,7 @@ def load():
             for state_chunk in sentences_generator:
                 input_chunk, start_index = state_chunk
 
-                output = model[model_name].predict(input_chunk)
+                output = models[model_name].predict(input_chunk)
 
                 for i, sentence in enumerate(output):
                     sentence_index = start_index + i
@@ -95,7 +96,7 @@ def load():
                     output_map = []
 
                     for word_index, words in enumerate(sentence):
-                        if word > threshold:
+                        if words > threshold:
                             output_map.append(position_map[word_index])
 
                     if len(output_map) > 0:
@@ -111,11 +112,10 @@ def split_sentences(zipped_sentences):
     return [[
             zipped[0],
             *split_and_get_position(zipped[1])
-        ] for zipped in zipped_sentences
-    ]
+            ] for zipped in zipped_sentences]
 
 
-def split_and_get_position(sentence):
+def split_and_get_position(sentences):
     results = twitter.pos(sentences[sentence_index])
     words = []
     positions = []
@@ -125,7 +125,7 @@ def split_and_get_position(sentence):
             continue
 
         positions.append([start, start + len(result[0]) - 1])
-        words.append("%s/%s" % result);
+        words.append("%s/%s" % result)
 
         start += len(result[0])
 
@@ -161,7 +161,7 @@ def remap_to_paragraph(output_values):
                 return key
 
     for output_value in output_values:
-        paragraph_map, output_ranges = output_value
+        paragraph_map, output_range = output_value
         start_id_key = find_sentence(paragraph_map, output_range[0])
         end_id_key = find_sentence(paragraph_map, output_range[1])
 
