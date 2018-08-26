@@ -2,22 +2,24 @@ from gensim.models import Word2Vec
 from keras.models import load_model
 from keras.preprocessing.sequence import pad_sequences
 from keras.utils import Sequence
-from konlpy.tag import Twitter
+from konlpy.tag import Okt
 from os import path
 import json
 import numpy as np
 import re
+import tensorflow as tf
+import time
 
 model_prefix = 'default'
 wv_model = None
-threshold = 0.8
+threshold = 0
 min_length = 25
 configuration = {}
 hangul_regex = re.compile(r'[가-힣ㄱ-ㅎㅏ-ㅣ]')
 
 models = {}
 filters = {}
-twitter = Twitter()
+twitter = Okt()
 
 
 class TumnSequence(Sequence):
@@ -76,8 +78,10 @@ def load():
         configuration = json.load(f)
 
     wv_model = Word2Vec.load(path.join(filter_path, "fit/models/word2vec.txt"))
+
     def prepare_sharedres(orig_paragraph):
         sharedres = {}
+        start_time = time.time()
 
         # paragraph_mapped
         # [[[0, 3, id], [4, 7, id2], [8, 10, id3]], [0, 3, id4], [0, 2, id5]]
@@ -132,9 +136,10 @@ def load():
         sentences_generator = TumnSequence(sentences, configuration['seq_chunk'], configuration['batch_size'], value_disable_pad=True)
         sharedres['generator'] = sentences_generator
         sharedres['id_maps'] = list(id_maps)
-        sharedres['position'] = list(positions);
+        sharedres['positions'] = list(positions)
+        sharedres['paragraph_mapped'] = paragraph_mapped
 
-        print("Preprocessed %d sentences." % len(sentences))
+        print("Preprocessed %d sentences in %d seconds." % (len(sentences), time.time() - start_time))
         return sharedres;
 
 
@@ -143,37 +148,49 @@ def load():
 
     for model_name in ['swearwords', 'hatespeech', 'mature']:
         models[model_name] = load_model(path.join(filter_path, 'fit/models/%s.hdf5' % model_name))
+        models[model_name]._make_predict_function()
+        graph = tf.get_default_graph()
 
         def filter_model(orig_paragraph, sharedres):
             if sharedres is None:
                 return []
 
-            return []
+            start_time = time.time()
             sentences_generator = sharedres['generator']
             positions = sharedres['positions']
             id_maps = sharedres['id_maps']
+            paragraph_mapped = sharedres['paragraph_mapped']
 
             return_output = []
 
-            for input_chunk in sentences_generator:
+            for state_chunk in sentences_generator:
                 input_chunk, sentence_indexes = state_chunk
 
-                output = models[model_name].predict(input_chunk)
+                with graph.as_default():
+                    output = models[model_name].predict(input_chunk)
 
                 for i, sentence in enumerate(output):
                     sentence_index = sentence_indexes[i]
                     position_map = positions[sentence_index]
+
+                    # output_map
+                    # Array of ranges, which will be filtered
                     output_map = []
 
-                    for word_index, words in enumerate(sentence):
-                        if words > threshold:
+                    for word_index, words_predict in enumerate(sentence):
+                        if words_predict > threshold:
+                            print("filter!", len(sentence), len(position_map))
+
                             output_map.append(position_map[word_index])
 
                     if len(output_map) > 0:
                         return_output.append([id_maps[sentence_index], output_map])
 
 
-            return remap_to_paragraph(paragraph_mapped, return_output)
+            final_output = remap_to_paragraph(return_output)
+            print("Processed %s in %d seconds." % (model_name, time.time() - start_time))
+            print(final_output)
+            return final_output
 
         filters["%s.%s" % (model_prefix, model_name)] = filter_model
 
@@ -194,8 +211,8 @@ def split_and_get_position(sentences):
     positions = []
     start = 0
     for result in results:
-        positions.append([start, start + len(result[0]) - 1])
-        words.append("%s/%s" % result)
+        positions.append([start, start + int(result[3]) - 1])
+        words.append("%s/%s" % (result[0], result[1]))
 
         start += len(result[0])
 
@@ -229,9 +246,8 @@ def bind_paragraphs(paragraphs):
     return sentence_list, id_list
 
 
-# Split ParagraphFragments into Sentences
+# Split Sentences into ParagraphFragments
 # Returns ParagraphFragments
-
 def remap_to_paragraph(output_values):
     return_values = []
 
