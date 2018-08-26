@@ -125,7 +125,7 @@ def load():
         # positions
         # [ [[0, 1], [2, 7], [8, 10]], [[0, 3]], [[0, 2]] ]
 
-         # Unzip sorted into three parts
+        # Unzip sorted into three parts
         id_maps, sentences, positions = zip(*sorted_sentence_zipped)
 
         # Replace tags with word2vec vector
@@ -140,11 +140,9 @@ def load():
         sharedres['paragraph_mapped'] = paragraph_mapped
 
         print("Preprocessed %d sentences in %d seconds." % (len(sentences), time.time() - start_time))
-        return sharedres;
-
+        return sharedres
 
     filters['__prepare_sharedres'] = prepare_sharedres
-
 
     for model_name in ['swearwords', 'hatespeech', 'mature']:
         models[model_name] = load_model(path.join(filter_path, 'fit/models/%s.hdf5' % model_name))
@@ -185,7 +183,6 @@ def load():
 
                     if len(output_map) > 0:
                         return_output.append([id_maps[sentence_index], output_map])
-
 
             final_output = remap_to_paragraph(return_output)
             print("Processed %s in %d seconds." % (model_name, time.time() - start_time))
