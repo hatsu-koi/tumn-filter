@@ -11,7 +11,9 @@ import re
 model_prefix = 'default'
 wv_model = None
 threshold = 0.8
+min_length = 25
 configuration = {}
+hangul_regex = re.compile(r'[가-힣ㄱ-ㅎㅏ-ㅣ]')
 
 models = {}
 filters = {}
@@ -19,7 +21,7 @@ twitter = Twitter()
 
 
 class TumnSequence(Sequence):
-    def __init__(self, sentences_sorted, chunk_size, batch_size):
+    def __init__(self, sentences_sorted, chunk_size, batch_size, value_disable_pad=False):
         self.dataset = []
 
         last_len = len(sentences_sorted[0][0])
@@ -32,7 +34,9 @@ class TumnSequence(Sequence):
             max_size = len(chunked[0][-1])
 
             chunked[0] = np.array(pad_sequences(chunked[0], maxlen=max_size))
-            chunked[1] = np.array(pad_sequences(chunked[1], maxlen=max_size))
+
+            if not value_disable_pad:
+                chunked[1] = np.array(pad_sequences(chunked[1], maxlen=max_size))
 
         for (sentence, value) in sentences_sorted:
             if (last_len + chunk_size < len(sentence)) or (len(chunked[0]) >= batch_size):
@@ -72,8 +76,6 @@ def load():
         configuration = json.load(f)
 
     wv_model = Word2Vec.load(path.join(filter_path, "fit/models/word2vec.txt"))
-
-
     def prepare_sharedres(orig_paragraph):
         sharedres = {}
 
@@ -93,6 +95,9 @@ def load():
         """
 
         paragraph_text, paragraph_mapped = bind_paragraphs(orig_paragraph)
+        if len(paragraph_text) <= 0:
+            return None
+
         paragraph_zipped = zip(paragraph_text, paragraph_mapped)
 
         # sentence_zipped
@@ -104,8 +109,8 @@ def load():
                 [[[0, 2, id5]], ['.../Punctuation'], [[0, 2]]]
             ]
         """
-        sentence_zipped = split_sentences(paragraph_text)
-        sorted_sentence_zipped = sorted(zipped, key=lambda x: len(x[1]))
+        sentence_zipped = split_sentences(paragraph_zipped)
+        sorted_sentence_zipped = sorted(sentence_zipped, key=lambda x: len(x[1]))
 
         # id_maps
         # [ [[0, 3, id], [4, 7, id2], [8, 10, id3]], [[0, 3, id4]], [[0, 2, id5]] ]
@@ -120,14 +125,16 @@ def load():
         id_maps, sentences, positions = zip(*sorted_sentence_zipped)
 
         # Replace tags with word2vec vector
-        sentences = enumerate(bind_word(sentences, wv_model))
+        sentences = bind_word(list(sentences), wv_model)
+        sentences = list(zip(sentences, range(len(sentences))))
 
         # Network Input
-        sentences_generator = TumnSequence(sentences, configuration['seq_chunk'], configuration['batch_size'])
+        sentences_generator = TumnSequence(sentences, configuration['seq_chunk'], configuration['batch_size'], value_disable_pad=True)
         sharedres['generator'] = sentences_generator
-        sharedres['id_maps'] = id_maps
-        sharedres['position'] = positions;
+        sharedres['id_maps'] = list(id_maps)
+        sharedres['position'] = list(positions);
 
+        print("Preprocessed %d sentences." % len(sentences))
         return sharedres;
 
 
@@ -138,6 +145,10 @@ def load():
         models[model_name] = load_model(path.join(filter_path, 'fit/models/%s.hdf5' % model_name))
 
         def filter_model(orig_paragraph, sharedres):
+            if sharedres is None:
+                return []
+
+            return []
             sentences_generator = sharedres['generator']
             positions = sharedres['positions']
             id_maps = sharedres['id_maps']
@@ -178,7 +189,7 @@ def split_sentences(zipped_sentences):
 # Split text with Twitter POS Tagging
 # Returns Splitted tags, Index mapping data for Tag <-> Word
 def split_and_get_position(sentences):
-    results = twitter.pos(sentences.join(''), norm=True, stem=True)
+    results = twitter.pos(''.join(sentences), norm=True, stem=True)
     words = []
     positions = []
     start = 0
@@ -201,14 +212,19 @@ def bind_paragraphs(paragraphs):
         sentences = []
         sentence_id = []
         total_len = 0
+        contains_hangul = False
 
         for sentence in paragraph:
+            if not contains_hangul and hangul_regex.search(sentence[1]):
+                contains_hangul = True
+
             sentences.append(sentence[1])
             sentence_id.append([total_len, total_len + len(sentence[1]) - 1, sentence[0]])
             total_len += len(sentence[1])
 
-        sentence_list.append(sentences)
-        id_list.append(sentence_id)
+        if total_len > min_length and contains_hangul:
+            sentence_list.append(sentences)
+            id_list.append(sentence_id)
 
     return sentence_list, id_list
 
