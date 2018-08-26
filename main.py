@@ -3,8 +3,9 @@ from keras.models import load_model
 from keras.preprocessing.sequence import pad_sequences
 from keras.utils import Sequence
 from konlpy.tag import Twitter
-import numpy as np
+from os import path
 import json
+import numpy as np
 import re
 
 model_prefix = 'default'
@@ -65,33 +66,91 @@ def bind_word(sentences, w_model):
 
 
 def load():
-    with open('./fit/config.json', 'r', encoding='utf-8') as f:
+    filter_path = path.dirname(path.abspath(__file__))
+
+    with open(path.join(filter_path, 'fit/config.json'), 'r', encoding='utf-8') as f:
         configuration = json.load(f)
 
-    wv_model = Word2Vec.load("./fit/models/word2vec.txt")
+    wv_model = Word2Vec.load(path.join(filter_path, "fit/models/word2vec.txt"))
+
+
+    def prepare_sharedres(orig_paragraph):
+        sharedres = {}
+
+        # paragraph_mapped
+        # [[[0, 3, id], [4, 7, id2], [8, 10, id3]], [0, 3, id4], [0, 2, id5]]
+
+        # paragraph_text
+        # [['text', 'text', '...'], ['text'], '...']
+
+        # paragraph_zipped
+        """
+            [
+                [['text', 'text', '...'], [[0, 3, id], [4, 7, id2], [8, 10, id3]]],
+                [['text'], [[0, 3, id4]]],
+                [['...'], [[0, 2, id5]]]
+            ]
+        """
+
+        paragraph_text, paragraph_mapped = bind_paragraphs(orig_paragraph)
+        paragraph_zipped = zip(paragraph_text, paragraph_mapped)
+
+        # sentence_zipped
+        # Zip of (paragraph_mapped, sentences, tag_positions)
+        """
+            [
+                [[[0, 3, id], [4, 7, id2], [8, 10, id3]], ['te/Noun', 'xttext/Verb', '.../Punctuation'], [[0, 1], [2, 7], [8, 10]]],
+                [[[0, 3, id4]], ['text/Noun'], [[0, 3]]],
+                [[[0, 2, id5]], ['.../Punctuation'], [[0, 2]]]
+            ]
+        """
+        sentence_zipped = split_sentences(paragraph_text)
+        sorted_sentence_zipped = sorted(zipped, key=lambda x: len(x[1]))
+
+        # id_maps
+        # [ [[0, 3, id], [4, 7, id2], [8, 10, id3]], [[0, 3, id4]], [[0, 2, id5]] ]
+
+        # sentences
+        # [ ["te/Noun", "xttext/Verb", ".../Punctuation"], ["text/Noun"], [".../Punctuation"] ]
+
+        # positions
+        # [ [[0, 1], [2, 7], [8, 10]], [[0, 3]], [[0, 2]] ]
+
+         # Unzip sorted into three parts
+        id_maps, sentences, positions = zip(*sorted_sentence_zipped)
+
+        # Replace tags with word2vec vector
+        sentences = enumerate(bind_word(sentences, wv_model))
+
+        # Network Input
+        sentences_generator = TumnSequence(sentences, configuration['seq_chunk'], configuration['batch_size'])
+        sharedres['generator'] = sentences_generator
+        sharedres['id_maps'] = id_maps
+        sharedres['position'] = positions;
+
+        return sharedres;
+
+
+    filters['__prepare_sharedres'] = prepare_sharedres
+
 
     for model_name in ['swearwords', 'hatespeech', 'mature']:
-        models[model_name] = load_model('./fit/models/%s.hdf5' % model_name)
+        models[model_name] = load_model(path.join(filter_path, 'fit/models/%s.hdf5' % model_name))
 
-        def filter_model(orig_paragraph):
-            paragraph_mapped, orig_zipped = bind_paragraphs(orig_paragraph)
-
-            zipped = split_sentences(orig_zipped)
-            zipped = sorted(zipped, key=lambda x: len(x[1]))
-            id_maps, sentences, positions = zip(*zipped) # Unzipping
-
-            sentences = bind_word(sentences, wv_model)
-            sentences_generator = TumnSequence(sentences, configuration['seq_chunk'], configuration['batch_size'])
+        def filter_model(orig_paragraph, sharedres):
+            sentences_generator = sharedres['generator']
+            positions = sharedres['positions']
+            id_maps = sharedres['id_maps']
 
             return_output = []
 
-            for state_chunk in sentences_generator:
-                input_chunk, start_index = state_chunk
+            for input_chunk in sentences_generator:
+                input_chunk, sentence_indexes = state_chunk
 
                 output = models[model_name].predict(input_chunk)
 
                 for i, sentence in enumerate(output):
-                    sentence_index = start_index + i
+                    sentence_index = sentence_indexes[i]
                     position_map = positions[sentence_index]
                     output_map = []
 
@@ -108,22 +167,22 @@ def load():
         filters["%s.%s" % (model_prefix, model_name)] = filter_model
 
 
+# Zip paragraph_mapped, sentences, tag_positions
 def split_sentences(zipped_sentences):
     return [[
-            zipped[0],
-            *split_and_get_position(zipped[1])
-            ] for zipped in zipped_sentences]
+            zipped[1],
+            *split_and_get_position(zipped[0])
+        ] for zipped in zipped_sentences]
 
 
+# Split text with Twitter POS Tagging
+# Returns Splitted tags, Index mapping data for Tag <-> Word
 def split_and_get_position(sentences):
-    results = twitter.pos(sentences[sentence_index])
+    results = twitter.pos(sentences.join(''), norm=True, stem=True)
     words = []
     positions = []
     start = 0
     for result in results:
-        if result.start() == 0:
-            continue
-
         positions.append([start, start + len(result[0]) - 1])
         words.append("%s/%s" % result)
 
@@ -132,6 +191,8 @@ def split_and_get_position(sentences):
     return words, positions
 
 
+# Merge ParagraphFragments into Sentences
+# Returns Sentences, Index mapping data for Sentence <-> ParagraphFragments
 def bind_paragraphs(paragraphs):
     sentence_list = []
     id_list = []
@@ -151,6 +212,9 @@ def bind_paragraphs(paragraphs):
 
     return sentence_list, id_list
 
+
+# Split ParagraphFragments into Sentences
+# Returns ParagraphFragments
 
 def remap_to_paragraph(output_values):
     return_values = []

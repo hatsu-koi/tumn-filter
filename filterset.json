@@ -12,7 +12,7 @@
 	"options": [
 		{
 			"name": "MatureContentNN",
-			"id": "default.maturecontent",
+			"id": "default.mature",
 			"description": "Filters Mature Content by neural network."
 		},
 		{
