@@ -92,7 +92,7 @@ def run(args):
         model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
 
     # Reading parsed comments
-    logger.info("[Fit] Reading parsed dataset...")
+    logger.info("[Fit] Reading parsed dataset from %s ..." % dataset_name)
 
     train_set = process_data(args, logger, dataset_name, "train")
     train_zipped = []

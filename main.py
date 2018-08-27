@@ -12,7 +12,7 @@ import time
 
 model_prefix = 'default'
 wv_model = None
-threshold = 0
+threshold = 0.8
 min_length = 25
 configuration = {}
 hangul_regex = re.compile(r'[가-힣ㄱ-ㅎㅏ-ㅣ]')
@@ -255,6 +255,9 @@ def remap_to_paragraph(output_values):
         # paragraph_map
         # [[0, 3, id], [4, 7, id2], [8, 10, id3]]
 
+        # ouptut_ranges
+        # [[6, 8], [9, 9]]
+
         for output_range in output_ranges:
             start_id_key = find_sentence(paragraph_map, output_range[0])
             end_id_key = find_sentence(paragraph_map, output_range[1])
@@ -264,23 +267,34 @@ def remap_to_paragraph(output_values):
                 continue
 
             i = start_id_key
-            len_sum = 0
 
             while i <= end_id_key:
-                fragment_len = paragraph_map[i][1] - paragraph_map[i][0]
-
                 start = 0
-                end = fragment_len
+                end = paragraph_map[i][1] - paragraph_map[i][0]
 
                 if i == start_id_key:
-                    start = output_range[0]
+                    start = output_range[0] - paragraph_map[i][0]
 
                 if i == end_id_key:
-                    end = output_range[1] - len_sum
+                    end = output_range[1] - paragraph_map[i][0]
 
                 return_values.append([paragraph_map[i][2], [start, end]])
 
                 i += 1
-                len_sum += fragment_len
 
     return return_values
+
+
+if __name__ == "__main__":
+    load()
+
+    paragraph = [[
+      ["id0", "씨발"],
+      ["id1", " 개"],
+      ["id2", "새끼"],
+      ["id3", "ㅇㅁㅇ"],
+      ["id4", "텀 개발 너무 힘들어요 흑흑 인정? 어 인정 으아아 나도 이거 좀 끝내고 싶다고 이 필터들아"]
+    ]]
+    sharedres = filters['__prepare_sharedres'](paragraph)
+
+    print(filters['default.swearwords'](paragraph, sharedres))
