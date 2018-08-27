@@ -178,18 +178,14 @@ def load():
                     output_map = []
 
                     for word_index, words_predict in enumerate(sentence):
-                        if words_predict > threshold:
-                            print("filter!", len(sentence), len(position_map))
-
+                        if words_predict > threshold and word_index < len(position_map):
                             output_map.append(position_map[word_index])
 
                     if len(output_map) > 0:
                         return_output.append([id_maps[sentence_index], output_map])
 
-
             final_output = remap_to_paragraph(return_output)
             print("Processed %s in %d seconds." % (model_name, time.time() - start_time))
-            print(final_output)
             return final_output
 
         filters["%s.%s" % (model_prefix, model_name)] = filter_model
@@ -257,23 +253,36 @@ def remap_to_paragraph(output_values):
                 return key
 
     for output_value in output_values:
-        paragraph_map, output_range = output_value
-        start_id_key = find_sentence(paragraph_map, output_range[0])
-        end_id_key = find_sentence(paragraph_map, output_range[1])
+        paragraph_map, output_ranges = output_value
+        # paragraph_map
+        # [[0, 3, id], [4, 7, id2], [8, 10, id3]]
 
-        i = start_id_key
+        for output_range in output_ranges:
+            start_id_key = find_sentence(paragraph_map, output_range[0])
+            end_id_key = find_sentence(paragraph_map, output_range[1])
 
-        while i <= end_id_key:
-            start = 0
-            end = paragraph_map[i][1] - paragraph_map[i][0]
+            if start_id_key is None or end_id_key is None:
+                print(paragraph_map, output_range)
+                continue
 
-            if i == start_id_key:
-                start = output_range[0]
+            i = start_id_key
+            len_sum = 0
 
-            if i == end_id_key:
-                end = output_range[1]
+            while i <= end_id_key:
+                fragment_len = paragraph_map[i][1] - paragraph_map[i][0]
 
-            return_values.append([paragraph_map[i][2], [start, end]])
-            i += 1
+                start = 0
+                end = fragment_len
+
+                if i == start_id_key:
+                    start = output_range[0]
+
+                if i == end_id_key:
+                    end = output_range[1] - len_sum
+
+                return_values.append([paragraph_map[i][2], [start, end]])
+
+                i += 1
+                len_sum += fragment_len
 
     return return_values
