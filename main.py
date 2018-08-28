@@ -185,9 +185,15 @@ def load():
                         output_map.append(position_map[word_index])
 
                 s = orig_paragraph[sentence_index]
-                for k in keywords[model_name]:
-                    index = s.find(k)
-                    output_map.append([index, index + len(k)])
+                for j, word in enumerate(s):
+                    word = word[1]
+                    for k in keywords[mname]:
+                        index = word.find(k)
+                        if index == -1:
+                            continue
+
+                        start = position_map[j][0] + index
+                        output_map.append([start, start + len(k)])
 
                 if len(output_map) > 0:
                     return_output.append([id_maps[sentence_index], output_map])
