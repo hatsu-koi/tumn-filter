@@ -12,6 +12,8 @@ import time
 
 model_prefix = 'default'
 wv_model = None
+# Oops, already trained model with word2vec, but fasttext is needed in kNN
+ft_model = None
 threshold = 0.5
 min_length = 25
 configuration = {}
@@ -145,9 +147,11 @@ def load():
     filters['__prepare_sharedres'] = prepare_sharedres
     graph = tf.get_default_graph()
 
-    def filter_model(model_name, orig_paragraph, sharedres):
+    def filter_model(mname, orig_paragraph, sharedres):
         if sharedres is None:
             return []
+
+        print("Processing %s" % mname)
 
         start_time = time.time()
         sentences_generator = sharedres['generator']
@@ -161,7 +165,7 @@ def load():
             input_chunk, sentence_indexes = state_chunk
 
             with graph.as_default():
-                output = models[model_name].predict(input_chunk)
+                output = models[mname].predict(input_chunk)
 
             for i, sentence in enumerate(output):
                 sentence_index = sentence_indexes[i]
@@ -179,14 +183,18 @@ def load():
                     return_output.append([id_maps[sentence_index], output_map])
 
         final_output = remap_to_paragraph(return_output)
-        print("Processed %s in %d seconds." % (model_name, time.time() - start_time))
+        print("Processed %s in %d seconds." % (mname, time.time() - start_time))
         return final_output
 
     for model_name in ['swearwords', 'hatespeech', 'mature']:
         models[model_name] = load_model(path.join(filter_path, 'fit/models/%s.hdf5' % model_name))
         models[model_name]._make_predict_function()
 
-        filters["%s.%s" % (model_prefix, model_name)] = lambda x, y: filter_model(model_name, x, y)
+        # Closure T_T
+        def filter_closure(mname):
+            return lambda x, y: filter_model(mname, x, y)
+
+        filters["%s.%s" % (model_prefix, model_name)] = filter_closure(model_name)
 
 
 # Zip paragraph_mapped, sentences, tag_positions
