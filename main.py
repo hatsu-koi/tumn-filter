@@ -24,7 +24,7 @@ filters = {}
 twitter = Okt()
 
 keywords = {
-    'swearwords': ['병신', '씨발'],
+    'swearwords': [],
     'mature': [],
     'hatespeech': []
 }
@@ -205,6 +205,16 @@ def load():
     for model_name in ['swearwords', 'hatespeech', 'mature']:
         models[model_name] = load_model(path.join(filter_path, 'fit/models/%s.hdf5' % model_name))
         models[model_name]._make_predict_function()
+
+         with open("./fit/dataset/%s/train" % model_name, 'r', encoding='utf-8') as f:
+                train_dataset = json.loads(f.read())
+                f.close()
+
+            data_list = {}
+            for train_data in train_dataset:
+                for i, word in enumerate(train_data['content']):
+                    if train_data['filter'][i] and word not in keywords[model_name]:
+                        keywords[model_name].append(word)
 
         # Closure T_T
         def filter_closure(mname):
