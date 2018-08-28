@@ -12,7 +12,7 @@ import time
 
 model_prefix = 'default'
 wv_model = None
-threshold = 0.8
+threshold = 0.5
 min_length = 25
 configuration = {}
 hangul_regex = re.compile(r'[가-힣ㄱ-ㅎㅏ-ㅣ]')
@@ -143,50 +143,50 @@ def load():
         return sharedres
 
     filters['__prepare_sharedres'] = prepare_sharedres
+    graph = tf.get_default_graph()
+
+    def filter_model(model_name, orig_paragraph, sharedres):
+        if sharedres is None:
+            return []
+
+        start_time = time.time()
+        sentences_generator = sharedres['generator']
+        positions = sharedres['positions']
+        id_maps = sharedres['id_maps']
+        paragraph_mapped = sharedres['paragraph_mapped']
+
+        return_output = []
+
+        for state_chunk in sentences_generator:
+            input_chunk, sentence_indexes = state_chunk
+
+            with graph.as_default():
+                output = models[model_name].predict(input_chunk)
+
+            for i, sentence in enumerate(output):
+                sentence_index = sentence_indexes[i]
+                position_map = positions[sentence_index]
+
+                # output_map
+                # Array of ranges, which will be filtered
+                output_map = []
+
+                for word_index, words_predict in enumerate(sentence):
+                    if words_predict > threshold and word_index < len(position_map):
+                        output_map.append(position_map[word_index])
+
+                if len(output_map) > 0:
+                    return_output.append([id_maps[sentence_index], output_map])
+
+        final_output = remap_to_paragraph(return_output)
+        print("Processed %s in %d seconds." % (model_name, time.time() - start_time))
+        return final_output
 
     for model_name in ['swearwords', 'hatespeech', 'mature']:
         models[model_name] = load_model(path.join(filter_path, 'fit/models/%s.hdf5' % model_name))
         models[model_name]._make_predict_function()
-        graph = tf.get_default_graph()
 
-        def filter_model(orig_paragraph, sharedres):
-            if sharedres is None:
-                return []
-
-            start_time = time.time()
-            sentences_generator = sharedres['generator']
-            positions = sharedres['positions']
-            id_maps = sharedres['id_maps']
-            paragraph_mapped = sharedres['paragraph_mapped']
-
-            return_output = []
-
-            for state_chunk in sentences_generator:
-                input_chunk, sentence_indexes = state_chunk
-
-                with graph.as_default():
-                    output = models[model_name].predict(input_chunk)
-
-                for i, sentence in enumerate(output):
-                    sentence_index = sentence_indexes[i]
-                    position_map = positions[sentence_index]
-
-                    # output_map
-                    # Array of ranges, which will be filtered
-                    output_map = []
-
-                    for word_index, words_predict in enumerate(sentence):
-                        if words_predict > threshold and word_index < len(position_map):
-                            output_map.append(position_map[word_index])
-
-                    if len(output_map) > 0:
-                        return_output.append([id_maps[sentence_index], output_map])
-
-            final_output = remap_to_paragraph(return_output)
-            print("Processed %s in %d seconds." % (model_name, time.time() - start_time))
-            return final_output
-
-        filters["%s.%s" % (model_prefix, model_name)] = filter_model
+        filters["%s.%s" % (model_prefix, model_name)] = lambda x, y: filter_model(model_name, x, y)
 
 
 # Zip paragraph_mapped, sentences, tag_positions

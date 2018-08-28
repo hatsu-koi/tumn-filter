@@ -1,7 +1,7 @@
 from functools import reduce
 from gensim.models import Word2Vec
 from keras.callbacks import ModelCheckpoint, TensorBoard
-from keras.layers import Bidirectional, LSTM, Reshape
+from keras.layers import Bidirectional, Dense, LSTM, Reshape, TimeDistributed
 from keras.models import Sequential, load_model
 from keras.preprocessing.sequence import pad_sequences
 from logging import FileHandler, Formatter, StreamHandler
@@ -80,16 +80,17 @@ def run(args):
     else:
         model = Sequential([
             Bidirectional(
-                LSTM(5, activation='relu', dropout=0.05, return_sequences=True),
+                LSTM(5, activation='relu', dropout=0.2, return_sequences=True),
 
                 input_shape=(None, word2vec_size)
             ),
-            LSTM(10, activation='relu', dropout=0.1, return_sequences=True),
-            LSTM(1, activation='sigmoid', dropout=0.05, return_sequences=True),
+            TimeDistributed(Dense(20, activation='relu')),
+            TimeDistributed(Dense(1, activation='sigmoid')),
             Reshape((-1, ))
         ])
 
         model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['categorical_accuracy'])
+        model.summary()
 
     # Reading parsed comments
     logger.info("[Fit] Reading parsed dataset from %s ..." % dataset_name)
