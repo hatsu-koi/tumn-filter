@@ -21,6 +21,11 @@ models = {}
 filters = {}
 twitter = Okt()
 
+keywords = {
+    'swearwords': ['병신', '씨발'],
+    'mature': [],
+    'hatespeech': []
+}
 
 class TumnSequence(Sequence):
     def __init__(self, sentences_sorted, chunk_size, batch_size, value_disable_pad=False):
@@ -174,6 +179,11 @@ def load():
                 for word_index, words_predict in enumerate(sentence):
                     if words_predict > threshold and word_index < len(position_map):
                         output_map.append(position_map[word_index])
+
+                s = orig_paragraph[sentence_index]
+                for k in keywords[model_name]:
+                    index = s.find(k)
+                    output_map.append([index, index + len(k)])
 
                 if len(output_map) > 0:
                     return_output.append([id_maps[sentence_index], output_map])
