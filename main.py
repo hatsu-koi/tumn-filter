@@ -14,7 +14,7 @@ model_prefix = 'default'
 wv_model = None
 # Oops, already trained model with word2vec, but fasttext is needed in kNN
 ft_model = None
-threshold = 0.5
+threshold = 0.8
 min_length = 25
 configuration = {}
 hangul_regex = re.compile(r'[가-힣ㄱ-ㅎㅏ-ㅣ]')
@@ -24,9 +24,9 @@ filters = {}
 twitter = Okt()
 
 keywords = {
-    'swearwords': [],
-    'mature': [],
-    'hatespeech': []
+    'swearwords': {},
+    'mature': {},
+    'hatespeech': {}
 }
 
 class TumnSequence(Sequence):
@@ -84,6 +84,9 @@ def load():
     with open(path.join(filter_path, 'fit/config.json'), 'r', encoding='utf-8') as f:
         configuration = json.load(f)
 
+    with open(path.join(filter_path, 'fit/models/words.json'), 'r', encoding='utf-8') as f:
+        keywords = json.load(f)
+
     wv_model = Word2Vec.load(path.join(filter_path, "fit/models/word2vec.txt"))
 
     def prepare_sharedres(orig_paragraph):
@@ -135,6 +138,11 @@ def load():
         # Unzip sorted into three parts
         id_maps, sentences, positions = zip(*sorted_sentence_zipped)
 
+        sharedres['sentences'] = list(sentences)
+        sharedres['id_maps'] = list(id_maps)
+        sharedres['positions'] = list(positions)
+        sharedres['paragraph_mapped'] = paragraph_mapped
+
         # Replace tags with word2vec vector
         sentences = bind_word(list(sentences), wv_model)
         sentences = list(zip(sentences, range(len(sentences))))
@@ -142,9 +150,6 @@ def load():
         # Network Input
         sentences_generator = TumnSequence(sentences, configuration['seq_chunk'], configuration['batch_size'], value_disable_pad=True)
         sharedres['generator'] = sentences_generator
-        sharedres['id_maps'] = list(id_maps)
-        sharedres['positions'] = list(positions)
-        sharedres['paragraph_mapped'] = paragraph_mapped
 
         print("Preprocessed %d sentences in %d seconds." % (len(sentences), time.time() - start_time))
         return sharedres
@@ -155,8 +160,6 @@ def load():
     def filter_model(mname, orig_paragraph, sharedres):
         if sharedres is None:
             return []
-
-        print("Processing %s" % mname)
 
         start_time = time.time()
         sentences_generator = sharedres['generator']
@@ -184,37 +187,28 @@ def load():
                     if words_predict > threshold and word_index < len(position_map):
                         output_map.append(position_map[word_index])
 
-                s = orig_paragraph[sentence_index]
-                for j, word in enumerate(s):
-                    word = word[1]
-                    for k in keywords[mname]:
-                        index = word.find(k)
-                        if index == -1:
-                            continue
+                if len(output_map) > 0:
+                    return_output.append([id_maps[sentence_index], output_map])
 
-                        start = position_map[j][0] + index
-                        output_map.append([start, start + len(k)])
+            for sentence_index, s in enumerate(sharedres['sentences']):
+                output_map = []
+                for j, word in enumerate(s):
+                    if word in keywords[mname]:
+                        output_map.append(positions[sentence_index][j])
 
                 if len(output_map) > 0:
                     return_output.append([id_maps[sentence_index], output_map])
 
+
+        print(return_output[:2])
         final_output = remap_to_paragraph(return_output)
+        print(final_output[:2])
         print("Processed %s in %d seconds." % (mname, time.time() - start_time))
         return final_output
 
     for model_name in ['swearwords', 'hatespeech', 'mature']:
         models[model_name] = load_model(path.join(filter_path, 'fit/models/%s.hdf5' % model_name))
         models[model_name]._make_predict_function()
-
-         with open("./fit/dataset/%s/train" % model_name, 'r', encoding='utf-8') as f:
-                train_dataset = json.loads(f.read())
-                f.close()
-
-            data_list = {}
-            for train_data in train_dataset:
-                for i, word in enumerate(train_data['content']):
-                    if train_data['filter'][i] and word not in keywords[model_name]:
-                        keywords[model_name].append(word)
 
         # Closure T_T
         def filter_closure(mname):
@@ -237,12 +231,9 @@ def split_and_get_position(sentences):
     results = twitter.pos(''.join(sentences), norm=True, stem=True)
     words = []
     positions = []
-    start = 0
     for result in results:
-        positions.append([start, start + int(result[3]) - 1])
+        positions.append([int(result[2]), int(result[2]) + int(result[3]) - 1])
         words.append("%s/%s" % (result[0], result[1]))
-
-        start += len(result[0])
 
     return words, positions
 
