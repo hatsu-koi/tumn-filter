@@ -169,7 +169,8 @@ def load():
 
         return_output = []
 
-        for state_chunk in sentences_generator:
+        for sentences_generator_index in range(len(sentences_generator)):
+            state_chunk = sentences_generator[sentences_generator_index]
             input_chunk, sentence_indexes = state_chunk
 
             with graph.as_default():
@@ -200,9 +201,7 @@ def load():
                     return_output.append([id_maps[sentence_index], output_map])
 
 
-        print(return_output[:2])
         final_output = remap_to_paragraph(return_output)
-        print(final_output[:2])
         print("Processed %s in %d seconds." % (mname, time.time() - start_time))
         return final_output
 
