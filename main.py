@@ -1,4 +1,5 @@
-from gensim.models import Word2Vec
+from gensim.models import FastText, Word2Vec
+from hangeul import split_syllables, join_jamos
 from keras.models import load_model
 from keras.preprocessing.sequence import pad_sequences
 from keras.utils import Sequence
@@ -13,6 +14,7 @@ import time
 model_prefix = 'default'
 wv_model = None
 # Oops, already trained model with word2vec, but fasttext is needed in kNN
+knn_enabled = True
 ft_model = None
 threshold = 0.8
 min_length = 25
@@ -88,6 +90,9 @@ def load():
         keywords = json.load(f)
 
     wv_model = Word2Vec.load(path.join(filter_path, "fit/models/word2vec.txt"))
+	
+	if knn_enabled:
+		ft_model = FastText.load(path.join(filter_path, "fit/models/fasttext.txt"))
 
     def prepare_sharedres(orig_paragraph):
         sharedres = {}
@@ -196,6 +201,15 @@ def load():
                 for j, word in enumerate(s):
                     if word in keywords[mname]:
                         output_map.append(positions[sentence_index][j])
+                    
+                    else if knn_enabled:
+                        knn_vocab_list = ft_model.wv.most_similar(split_syllables(word))
+                        knn_ratio = len([
+                            word for word in knn_vocab_list if join_jamos(word) in keywords[mname]
+                        ]) / len(knn_vocab_list)
+                        
+                        if knn_ratio > threshold:
+                            output_map.append(positions[sentence_index][j])
 
                 if len(output_map) > 0:
                     return_output.append([id_maps[sentence_index], output_map])
